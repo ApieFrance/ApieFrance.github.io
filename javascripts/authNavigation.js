@@ -24,7 +24,7 @@ var repo = github.getRepo('pimpin', 'gitGouv');
 // Pull the JSON file for site
 repo.read('master','site.json',function(err, data){            
 	if(!err) {
-		$Site = jQuery.parseJSON(data);
+		$Site = JSON.parse(data);
 
 		// Build the navigation
 		$.each($Site['navigation'], function($key, $value) {
