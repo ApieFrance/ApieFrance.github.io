@@ -252,18 +252,18 @@
         _request("DELETE", repoPath + "/git/refs/"+ref, options, cb);
       };
 
-      // Create a repo  
+      // Create a repo
       // -------
 
       this.createRepo = function(options, cb) {
         _request("POST", "/user/repos", options, cb);
       };
 
-      // Delete a repo  
-      // --------  
+      // Delete a repo
+      // --------
 
-      this.deleteRepo = function(cb) {  
-        _request("DELETE", repoPath, options, cb);  
+      this.deleteRepo = function(cb) {
+        _request("DELETE", repoPath, options, cb);
       };
 
       // List all tags of a repository
@@ -409,14 +409,17 @@
       this.commit = function(parent, tree, message, cb) {
         var data = {
           "message": message,
-          "author": {
-            "name": options.username
-          },
           "parents": [
             parent
           ],
           "tree": tree
         };
+
+        if (options.username) {
+          data.author = {
+            "name": options.username
+          }
+        }
 
         _request("POST", repoPath + "/git/commits", data, function(err, res) {
           currentTree.sha = res.sha; // update latest commit
@@ -430,7 +433,7 @@
 
       this.updateHead = function(head, commit, cb) {
         _request("PATCH", repoPath + "/git/refs/heads/" + head, { "sha": commit }, function(err, res) {
-          cb(err);
+          cb(err, commit);
         });
       };
 
@@ -445,7 +448,7 @@
       // --------
 
       this.contents = function(branch, path, cb, sync) {
-        return _request("GET", repoPath + "/contents?ref=" + branch + (path ? "&path=" + path : ""), null, cb, 'raw', sync);
+        return _request("GET", repoPath + "/contents/"+(path ? path : "")+"?ref=" + branch, null, cb, 'raw', sync);
       };
 
       // Fork repository
@@ -455,9 +458,9 @@
         _request("POST", repoPath + "/forks", null, cb);
       };
 
-      // Branch repository  
-      // --------  
- 
+      // Branch repository
+      // --------
+
       this.branch = function(oldBranch,newBranch,cb) {
         if(arguments.length === 2 && typeof arguments[1] === "function") {
           cb = newBranch;
@@ -549,24 +552,24 @@
           });
         });
       };
-      
+
       // Delete a file from the tree
       // -------
-      
+
       this.delete = function(branch, path, cb) {
         that.getSha(branch, path, function(err, sha) {
           if (!sha) return cb("not found", null);
           var delPath = repoPath + "/contents/" + path;
           var params = {
             "message": "Deleted " + path,
-            "sha": sha 
+            "sha": sha
           };
           delPath += "?message=" + encodeURIComponent(params.message);
           delPath += "&sha=" + encodeURIComponent(params.sha);
           _request("DELETE", delPath, null, cb);
         })
       }
-      
+
       // Move a file to a new location
       // -------
 
@@ -576,13 +579,15 @@
             // Update Tree
             _.each(tree, function(ref) {
               if (ref.path === path) ref.path = newPath;
-              if (ref.type === "tree") delete ref.sha;
+            });
+            tree = _.filter(tree, function(ref) {
+              return ref.type != "tree"
             });
 
             that.postTree(tree, function(err, rootTree) {
-              that.commit(latestCommit, rootTree, 'Deleted '+path , function(err, commit) {
+              that.commit(latestCommit, rootTree, 'Moved '+path+' to '+newPath , function(err, commit) {
                 that.updateHead(branch, commit, function(err) {
-                  cb(err);
+                  cb(err, commit);
                 });
               });
             });
@@ -593,9 +598,10 @@
       // Write file contents to a given branch and path
       // -------
 
-      this.write = function(branch, path, content, message, cb) {
+      this.write = function(branch, path, content, message, cb, sha) {
         updateTree(branch, function(err, latestCommit) {
           if (err) return cb(err);
+          if (sha) latestCommit = sha;
           that.postBlob(content, function(err, blob) {
             if (err) return cb(err);
             that.updateTree(latestCommit, path, blob, function(err, tree) {
@@ -607,6 +613,45 @@
             });
           });
         });
+      };
+
+      // Write all files, a file is an object :
+      // {
+      //  name:
+      //  path:
+      //  content:
+      //  message:
+      // }
+      // -------
+
+      this.writeAll = function(branch, files, cb, sha) {
+
+        function updateFile(shaCommit, index) {
+          var file = files[index];
+          if (index === files.length) return cb(null, shaCommit);
+
+          updateTree(branch, function(err, latestCommit) {
+            if (err) return cb(err);
+            shaCommit = shaCommit ||  latestCommit;
+            that.postBlob(file.content, function(err, blob) {
+              if (err) return cb(err);
+              that.updateTree(shaCommit, file.path, blob, function(err, tree) {
+                if (err) return cb(err);
+                that.commit(shaCommit, tree, file.message, function(err, commit) {
+                  if (err) return cb(err);
+                  that.updateHead(branch, commit, function(err) {
+                    if (err) return cb(err);
+                    currentTree.sha = commit;
+                    updateFile(commit, ++index);
+
+                  });
+                });
+              });
+            });
+          });
+        }
+
+        updateFile(sha, 0);
       };
 
       // List commits on a repository. Takes an object of optional paramaters:
@@ -747,6 +792,25 @@
       };
     };
 
+    // Authorization API
+    // =================
+
+    Github.Authorization = function() {
+      var path = "/authorizations";
+
+      this.create = function(options, cb) {
+        _request("POST", path, options, function(err, res) {
+          cb(err, res);
+        });
+      };
+
+      this.list = function(cb) {
+        _request("GET", path, null, function(err, res) {
+          cb(err, res);
+        });
+      };
+    };
+
     // Top Level API
     // -------
 
@@ -764,6 +828,10 @@
 
     this.getGist = function(id) {
       return new Github.Gist({id: id});
+    };
+
+    this.getAuthorization = function(id) {
+      return new Github.Authorization();
     };
   };
 
